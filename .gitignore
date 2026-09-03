@@ -1,0 +1,18 @@
+# Local-only scripts (не коммитить)
+scripts/local/
+scripts/local/**
+
+# Secrets & env
+.env
+.env.local
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Local LLM outputs
+ai/output/local/
+
+# OS
+.DS_Store
