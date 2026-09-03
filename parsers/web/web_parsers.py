@@ -1,4 +1,3 @@
-
 from __future__ import annotations
  
 import re
@@ -7,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from email.utils import parsedate_to_datetime
-from typing import Optional
+from typing import Callable, Optional
 from urllib.parse import urlparse
 from xml.etree import ElementTree as ET
  
@@ -31,8 +30,7 @@ DEFAULT_DELAY = 10
  
 @dataclass
 class NewsItem:
-    """Unified news record — same shape regardless of which source it came from.
-    """
+    """Unified news record — same shape regardless of which source it came from."""
  
     source: str
     title: str
@@ -58,7 +56,7 @@ class NewsItem:
 @dataclass
 class SourceConfig:
     name: str
-    domain: str  
+    domain: str
     rss_url: str
     wrapper_selector: str
     paragraph_selector: Optional[str]
@@ -101,7 +99,7 @@ def _resolve_source(url: str) -> SourceConfig:
     for source in SOURCES:
         if source.domain in host:
             return source
-        
+ 
     known = ", ".join(s.domain for s in SOURCES)
     raise ValueError(f"No source configuration found for URL '{url}'. Known sources: {known}")
  
@@ -111,9 +109,7 @@ def _resolve_source(url: str) -> SourceConfig:
 # --------------------------------------------------------------------------- #
  
 def _clean_paragraph_text(p_tag) -> str:
-    """
-    Carefully extract paragraph text that is "broken up" by <a> links.
-    """
+    """Carefully extract paragraph text that is "broken up" by <a> links."""
     raw = p_tag.get_text(separator=" ", strip=True)
     text = re.sub(r"\s+", " ", raw)  # collapse repeated whitespace / line breaks
     text = re.sub(r"\s+([,.!?;:»])", r"\1", text)  # no space before punctuation/»
@@ -125,10 +121,10 @@ def _parse_pub_date(pub_date: Optional[str]) -> Optional[datetime]:
     """Parse an RFC 2822 pubDate string (as used by RSS) into a datetime."""
     if not pub_date:
         return None
-    
+ 
     try:
         return parsedate_to_datetime(pub_date)
-    
+ 
     except (TypeError, ValueError):
         return None
  
@@ -204,7 +200,7 @@ class WebParsers:
         if wrapper:
             p_tags = wrapper.select(source.paragraph_selector) if source.paragraph_selector else wrapper.find_all("p")
             collect(p_tags)
-
+ 
         else:
             collect(soup.select(source.fallback_selector))
  
@@ -215,11 +211,23 @@ class WebParsers:
  
     # -- Public API -----------------------------------------------------------
  
-    def parse_page(self, url: str, limit: Optional[int] = None, 
-                   until: Optional[datetime] = None, delay: float = DEFAULT_DELAY) -> list[dict]:
+    def parse_page(
+        self,
+        url: str,
+        limit: Optional[int] = None,
+        until: Optional[datetime] = None,
+        delay: float = DEFAULT_DELAY,
+        on_item: Optional[Callable[[dict], None]] = None,
+    ) -> list[dict]:
         """
         Full pipeline for one source: RSS -> filtered items -> article text
         fetched for each one.
+ 
+        If `on_item` is given, it's called with each item's dict IMMEDIATELY
+        after that item's article text has been fetched — i.e. one item at a
+        time, not after the whole source is done. This is what lets callers
+        (e.g. the DB-writing main script) persist each news item as soon as
+        it's ready, instead of waiting for the whole feed to finish.
         """
         source = _resolve_source(url)
         items = self._parse_rss(source, url)
@@ -231,14 +239,14 @@ class WebParsers:
                 if pub_dt is None:
                     filtered.append(item)
                     continue
-
+ 
                 cmp_dt = pub_dt if until.tzinfo else pub_dt.replace(tzinfo=None)
                 if cmp_dt >= until:
                     filtered.append(item)
-
+ 
                 else:
                     break
-
+ 
             items = filtered
  
         if limit is not None:
@@ -250,20 +258,36 @@ class WebParsers:
                 article = self._parse_article(source, item.link)
                 item.text = article["text"]
                 item.paragraphs = article["paragraphs"]
-            
-            except Exception as exc:  
+ 
+            except Exception as exc:
                 item.text = None
                 item.paragraphs = []
                 print(f"[WARN] Failed to parse {item.link}: {exc}")
-
-            result.append(item.to_dict())
+ 
+            item_dict = item.to_dict()
+            result.append(item_dict)
+ 
+            if on_item is not None:
+                on_item(item_dict)  # отдаём новость наружу сразу, не дожидаясь остальных
+ 
             time.sleep(delay)
  
         return result
  
-    def parse_many(self, requests_spec: list[dict], max_workers: Optional[int] = None) -> dict[str, list[dict]]:
+    def parse_many(
+        self,
+        requests_spec: list[dict],
+        max_workers: Optional[int] = None,
+        on_item: Optional[Callable[[dict], None]] = None,
+    ) -> dict[str, list[dict]]:
         """
         Parse several sources concurrently instead of one after another.
+ 
+        `on_item`, if given, is passed through to every worker's `parse_page`
+        call, so it will be invoked from whichever thread is currently
+        processing that source — callers must make sure `on_item` itself is
+        safe to call concurrently from multiple threads (e.g. it opens its
+        own DB connection per thread rather than sharing one).
         """
  
         def worker(spec: dict) -> tuple[str, list[dict]]:
@@ -274,6 +298,7 @@ class WebParsers:
                 limit=spec.get("limit"),
                 until=spec.get("until"),
                 delay=spec.get("delay", DEFAULT_DELAY),
+                on_item=on_item,
             )
             return source_name, data
  
@@ -314,7 +339,7 @@ def _print_news_item(n: dict, preview_len: int = 300) -> None:
     label_width = max(len(label) for label, _ in fields)
     for label, value in fields:
         print(f"{label:<{label_width}} : {value}")
-
+ 
     print()
     print("Text preview:")
     print(preview if preview else "(no text extracted)")
