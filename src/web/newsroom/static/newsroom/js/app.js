@@ -392,7 +392,7 @@ async function deleteNews(id) {
 function openNewsModal(n) {
   if (!n) return;
   $modalRoot.innerHTML = `
-    <div class="modal-overlay" data-action="close-modal">
+    <div class="modal-overlay">
       <div class="modal" data-news-id="${n.id}">
         <div class="modal__header">
           <h2 class="modal__title h-l">Детали публикации</h2>
@@ -458,10 +458,15 @@ function openNewsModal(n) {
 }
 
 async function onModalClick(e) {
-  if (e.target.closest("[data-action='close-modal']") && e.target.closest(".modal-overlay")) {
-    if (e.target.classList.contains("modal-overlay") || e.target.closest("[data-action='close-modal']")) {
-      $modalRoot.innerHTML = "";
-    }
+  // Фон (.modal-overlay) НЕ несёт data-action="close-modal" — он есть только
+  // на крестике и кнопках "Отменить"/"Отмена". Поэтому closest() отсюда
+  // никогда случайно не всплывёт до фона при клике внутри .modal, и окно
+  // закрывается только по явному намерению: клик по фону вне карточки или
+  // по одной из этих кнопок.
+  const clickedOverlayBackground = e.target.classList.contains("modal-overlay");
+  const clickedCloseAction = e.target.closest("[data-action='close-modal']");
+  if (clickedOverlayBackground || clickedCloseAction) {
+    $modalRoot.innerHTML = "";
     return;
   }
 
@@ -517,7 +522,7 @@ function applyNewsUpdate(updated) {
 
 function openAddNewsModal() {
   $modalRoot.innerHTML = `
-    <div class="modal-overlay" data-action="close-modal">
+    <div class="modal-overlay">
       <div class="modal" id="add-news-modal">
         <div class="modal__header">
           <h2 class="modal__title h-l">Добавить публикацию вручную</h2>

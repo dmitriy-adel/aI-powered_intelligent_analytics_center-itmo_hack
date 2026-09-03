@@ -1,7 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
-  /* Категории (из дизайн-системы) */
   --cat-politics-bg: #EEF2FF;   --cat-politics-fg: #4338CA;
   --cat-economy-bg: #ECFDF5;    --cat-economy-fg: #059669;
   --cat-tech-bg: #ECFEFF;       --cat-tech-fg: #0E7490;
