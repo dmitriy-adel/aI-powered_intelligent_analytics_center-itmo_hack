@@ -17,7 +17,9 @@ CREATE TABLE sources (
     status          source_status_enum NOT NULL DEFAULT 'active',
     last_update_dt  TIMESTAMPTZ,                -- дата последней новости из источника
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
- 
+    category_default TEXT NOT NULL DEFAULT 'Экономика',
+    poll_interval    TEXT NOT NULL DEFAULT 'Каждые 15 минут',
+
     CONSTRAINT sources_name_unique UNIQUE (name),
     CONSTRAINT sources_url_rss_unique UNIQUE (url_rss)
 );
@@ -43,7 +45,11 @@ CREATE TABLE news (
     tags                TEXT[] NOT NULL DEFAULT '{}', -- список тегов
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     author              TEXT NOT NULL DEFAULT 'system',
- 
+    category            TEXT NOT NULL DEFAULT 'Экономика',
+    is_hidden           BOOLEAN NOT NULL DEFAULT FALSE,
+    in_general          BOOLEAN NOT NULL DEFAULT TRUE,
+    fact_when           TEXT,
+
     CONSTRAINT news_url_unique UNIQUE (url)
 );
 
@@ -59,6 +65,8 @@ CREATE INDEX idx_news_company_mentions ON news USING GIN (company_mentions);
 CREATE INDEX idx_news_regulatory_changes ON news USING GIN (regulatory_changes);
 CREATE INDEX idx_news_consequences ON news USING GIN (consequences);
 CREATE INDEX idx_news_industry_trends ON news USING GIN (industry_trends);
+CREATE INDEX IF NOT EXISTS idx_news_in_general ON news (in_general);
+CREATE INDEX IF NOT EXISTS idx_news_is_hidden ON news (is_hidden);
  
  
 CREATE TABLE users (
