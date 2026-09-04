@@ -1,28 +1,29 @@
+import os
 from datetime import datetime
+from pathlib import Path
+from typing import Optional
 
 import psycopg2
 import psycopg2.extras
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 
 class DBConnection:
-    """
-    Класс для подключения к локальной PostgreSQL БД itmo_hack
-    и работы с таблицами news и sources.
-    """
-
     def __init__(
         self,
-        host: str = "localhost",
-        dbname: str = "itmo_hack",
-        port: int = 5432,
-        user: str = "postgres",
-        password: str = "1",
+        host=None,
+        dbname=None,
+        port=None,
+        user=None,
+        password=None,
     ):
-        self.host = host
-        self.dbname = dbname
-        self.port = port
-        self.user = user
-        self.password = password
+        self.host = host or os.environ.get("PGHOST", "localhost")
+        self.dbname = dbname or os.environ.get("PGDATABASE", "itmo_hack")
+        self.port = int(port or os.environ.get("PGPORT", "5432"))
+        self.user = user or os.environ.get("PGUSER", "postgres")
+        self.password = password if password is not None else os.environ.get("PGPASSWORD", "1")
         self.conn = None
 
     def connect(self):
@@ -71,7 +72,7 @@ class DBConnection:
             }
         return result
 
-    def update_source_last_update(self, source_id, dt: datetime | None = None):
+    def update_source_last_update(self, source_id, dt: Optional[datetime] = None):
         """Проставляет last_update_dt источнику после успешного сбора данных."""
         conn = self.connect()
         dt = dt or datetime.utcnow()
@@ -86,7 +87,7 @@ class DBConnection:
         conn = self.connect()
         query = """
             INSERT INTO news (source_id, source, title, url, author, category, text)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, COALESCE(%s, 'Без заголовка'), %s, %s, COALESCE(%s, 'Экономика'), %s)
             RETURNING id;
         """
 

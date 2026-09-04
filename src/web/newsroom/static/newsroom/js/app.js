@@ -24,6 +24,60 @@ function escapeHtml(str) {
   ));
 }
 
+const EVENT_TYPE_LABEL = {
+  introduced: "Внесён",
+  draft: "Проект",
+  discussion: "Обсуждение",
+  reading: "Чтение",
+  stage: "Стадия",
+  published: "Опубликован",
+  revision: "Правки",
+  announcement: "Анонс",
+};
+
+function formatLifecycleDate(raw) {
+  if (!raw) return "";
+  const s = String(raw).trim();
+  const iso = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (iso) {
+    const [y, m, d] = iso[1].split("-");
+    return `${d}.${m}.${y}`;
+  }
+  const ru = s.match(/^(\d{2}\.\d{2}\.\d{4})/);
+  return ru ? ru[1] : s.slice(0, 16);
+}
+
+function orderedLifecycle(events) {
+  const list = Array.isArray(events) ? events.slice() : [];
+  if (!list.length) return [];
+  const last = String(list[list.length - 1].event_type || "").toLowerCase();
+  if (last === "introduced") list.reverse();
+  return list;
+}
+
+function lifecycleHtml(events, { limit = 0 } = {}) {
+  const all = orderedLifecycle(events);
+  if (!all.length) return "";
+  const shown = limit && all.length > limit ? all.slice(0, limit) : all;
+  const more = all.length - shown.length;
+  const items = shown.map((ev) => {
+    const kind = EVENT_TYPE_LABEL[(ev.event_type || "").toLowerCase()] || ev.event_type || "Этап";
+    const date = formatLifecycleDate(ev.date);
+    const title = escapeHtml(ev.title || "");
+    const inner = ev.link
+      ? `<a href="${escapeHtml(ev.link)}" target="_blank" rel="noopener">${title}</a>`
+      : title;
+    return `<li class="timeline__item">
+      <span class="timeline__dot"></span>
+      <div>
+        <div class="timeline__meta">${escapeHtml(kind)}${date ? ` · ${escapeHtml(date)}` : ""}</div>
+        <div class="timeline__title">${inner}</div>
+      </div>
+    </li>`;
+  }).join("");
+  return `<ol class="timeline">${items}</ol>${more ? `<div class="timeline__more">ещё ${more} стадий — откройте карточку</div>` : ""}`;
+}
+
 function toast(message, type = "ok") {
   const el = document.createElement("div");
   el.className = "toast" + (type === "error" ? " toast--error" : "");
@@ -254,6 +308,9 @@ function newsCardHtml(n, isGeneral) {
         <div class="card__badges">
           ${n.category ? `<span class="badge" style="${categoryStyle(n.category)}">${escapeHtml(n.category)}</span>` : ""}
           ${n.importance ? `<span class="badge" style="${importanceStyle(n.importance)}">${escapeHtml(n.importance)}</span>` : ""}
+          ${n.object_type === "npa" ? `<span class="badge">НПА</span>` : ""}
+          ${n.lifecycle && n.lifecycle.length > 1 ? `<span class="badge">${n.lifecycle.length} стадий</span>` : ""}
+          ${isGeneral && n.plot_count > 1 ? `<span class="badge">${n.plot_count} источников</span>` : ""}
         </div>
         ${originLabel}
       </div>
@@ -263,6 +320,11 @@ function newsCardHtml(n, isGeneral) {
         <dl class="card__facts">
           ${facts.map(([k, v]) => `<dt>${k}:</dt><dd>${escapeHtml(v)}</dd>`).join("")}
         </dl>` : ""}
+      ${n.lifecycle && n.lifecycle.length ? `
+        <div class="timeline-wrap">
+          <div class="timeline-wrap__label">Жизненный цикл</div>
+          ${lifecycleHtml(n.lifecycle, { limit: 8 })}
+        </div>` : ""}
       ${n.tags && n.tags.length ? `
         <div class="card__tags">${n.tags.map((t) => `<span class="card__tag">${escapeHtml(t)}</span>`).join("")}</div>` : ""}
       <div class="card__footer">
@@ -395,7 +457,7 @@ function openNewsModal(n) {
     <div class="modal-overlay">
       <div class="modal" data-news-id="${n.id}">
         <div class="modal__header">
-          <h2 class="modal__title h-l">Детали публикации</h2>
+          <h2 class="modal__title h-l">${n.object_type === "npa" ? "Цикл НПА" : "Детали публикации"}</h2>
           <button class="modal__close" data-action="close-modal">${ICONS.close}</button>
         </div>
 
@@ -431,6 +493,12 @@ function openNewsModal(n) {
             <dt>Последствия:</dt><dd><input id="edit-consequences" style="width:100%; border:1px solid var(--border); border-radius:6px; padding:6px 8px;" value="${escapeHtml(n.consequences || "")}"></dd>
           </div>
         </div>
+
+        ${n.lifecycle && n.lifecycle.length ? `
+        <div class="modal__section">
+          <div class="timeline-wrap__label">Жизненный цикл · ${n.lifecycle.length} стадий</div>
+          ${lifecycleHtml(n.lifecycle)}
+        </div>` : ""}
 
         <div class="toggle-row">
           <span>Добавлена в общую ленту · ${escapeHtml(n.pub_date || "")}</span>

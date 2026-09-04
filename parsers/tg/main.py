@@ -41,7 +41,7 @@ def collect_telegram_sources(db: DBConnection) -> dict:
         if info.get("source_type") != "Telegram":
             continue
 
-        if not info.get("status"):
+        if info.get("status") != "active":
             continue
         
         username = extract_channel_username(info.get("url", ""))

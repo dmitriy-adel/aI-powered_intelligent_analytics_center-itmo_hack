@@ -49,7 +49,7 @@ ANNOTATION_SCHEMA = {
         },
         "when": {
             "type": "string",
-            "description": "Сроки, даты, стадия — или \"не указано\"",
+            "description": "Сроки, даты, стадия — или «не указано»",
         },
         "consequences": {
             "type": "string",
@@ -83,7 +83,7 @@ ANNOTATION_SCHEMA = {
             "properties": {
                 "essence": {
                     "type": "string",
-                    "description": "Поле \"Суть / содержание\" как в Excel-реестре",
+                    "description": "Поле «Суть / содержание» как в Excel-реестре",
                 },
                 "applicability_score": {
                     "type": "integer",
@@ -109,7 +109,7 @@ ANNOTATION_SCHEMA = {
                 },
                 "stage": {
                     "type": "string",
-                    "description": "Стадия для НПА или \"—\" для новости",
+                    "description": "Стадия для НПА или «—» для новости",
                 },
             },
         },

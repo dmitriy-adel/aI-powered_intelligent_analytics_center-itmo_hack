@@ -368,6 +368,51 @@ button { cursor: pointer; }
 .card__facts dt { color: var(--text-tertiary); }
 .card__facts dd { margin: 0; }
 
+.timeline-wrap { margin-bottom: 12px; }
+.timeline-wrap__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  margin-bottom: 8px;
+  letter-spacing: 0.01em;
+}
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 4px;
+  border-left: 2px solid var(--border);
+}
+.timeline__item {
+  position: relative;
+  padding: 0 0 10px 16px;
+  font-size: 13px;
+}
+.timeline__item:last-child { padding-bottom: 0; }
+.timeline__dot {
+  position: absolute;
+  left: -6px;
+  top: 5px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--blue, #2563eb);
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px var(--border);
+}
+.timeline__meta {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  margin-bottom: 2px;
+}
+.timeline__title { line-height: 1.4; color: var(--text-secondary); }
+.timeline__title a { color: var(--blue); }
+.timeline__more {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-top: 6px;
+  padding-left: 16px;
+}
+
 .card__tags { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .card__tag {
   font-size: 12px;

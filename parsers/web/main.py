@@ -1,4 +1,3 @@
-
 import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -36,7 +35,7 @@ def collect_web_sources(db: DBConnection) -> list[tuple[dict, int, dict]]:
     tasks = []
  
     for source_id, info in sources.items():
-        if not info.get("status"):
+        if info.get("status") != "active":
             continue
  
         candidate_url = info.get("url_rss") or info.get("url")
