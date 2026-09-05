@@ -33,4 +33,3 @@ const Api = {
   changeSource: (payload) => apiRequest("/change_source", { method: "POST", body: payload }),
   removeSource: (id) => apiRequest("/remove_source", { method: "POST", body: { id } }),
 };
- 

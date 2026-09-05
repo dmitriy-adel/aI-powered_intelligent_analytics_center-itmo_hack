@@ -51,12 +51,6 @@
   <div id="modal-root"></div>
   <div class="toast-stack" id="toast-stack"></div>
 
-  <script>
-    window.NEWSROOM_CONFIG = {
-      apiBase: "",  /* пусто = тот же origin, что и сайт (см. config.js) */
-      csrfToken: "{{ csrf_token }}"
-    };
-  </script>
   <script src="{% static 'newsroom/js/config.js' %}"></script>
   <script src="{% static 'newsroom/js/api.js' %}"></script>
   <script src="{% static 'newsroom/js/app.js' %}"></script>
