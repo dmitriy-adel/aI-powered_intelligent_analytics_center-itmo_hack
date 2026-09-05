@@ -23,19 +23,14 @@ class EntityMatchResult:
 
 
 def extract_organizations(text: str) -> list[str]:
-    """Извлекает все сущности типа ORG из текста через Natasha NER."""
     doc: Doc = Doc(text)
     doc.segment(_segmenter)
     doc.tag_ner(_ner_tagger)
+
     return [span.text for span in doc.spans if span.type == "ORG"]
 
 
 def _fuzzy_contains(candidate: str, terms: list[str], threshold: int = FUZZY_THRESHOLD) -> str | None:
-    """
-    Возвращает термин из terms, если candidate достаточно похож на него, иначе None.
-    MIN_LENGTH_RATIO защищает от ложных срабатываний partial_ratio на коротких
-    подстроках (например "CAS" внутри "CAS Dreguard").
-    """
     candidate_clean: str = candidate.strip().lower()
     if len(candidate_clean) < 3:
         return None
@@ -53,7 +48,6 @@ def _fuzzy_contains(candidate: str, terms: list[str], threshold: int = FUZZY_THR
 
 
 def _substring_matches(text: str, terms: list[str]) -> list[str]:
-    """Прямой поиск терминов по полному тексту — подстраховка от пропусков NER."""
     text_lower: str = text.lower()
     return [term for term in terms if term.lower() in text_lower]
 

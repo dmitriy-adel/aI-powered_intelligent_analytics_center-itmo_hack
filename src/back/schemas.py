@@ -77,6 +77,7 @@ class NewsOut(BaseModel):
     object_type: Optional[str] = None
     plot_count: int = 1
     lifecycle: List[dict] = Field(default_factory=list)
+    text: str = ""
 
 class GetNewsResponse(BaseModel):
     source: str

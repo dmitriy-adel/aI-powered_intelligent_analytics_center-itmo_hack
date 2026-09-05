@@ -1,16 +1,11 @@
-// Аналитический центр — клиентская логика.
-//
-// Страница одна (index.html), дальше всё — client-side "роутинг" между
-// лентой источника, общей лентой и страницей управления источниками:
-// клик в сайдбаре не перезагружает страницу, а дёргает /get_news и
-// перерисовывает #main. Так задумано ТЗ: "при переключении на новую
-// ленту мы должны отправлять запрос на сервер".
-
 const state = {
   sources: null,          // ответ /get_sources
   view: { type: "feed", sourceId: "general" },
   newsCache: {},          // sourceId -> список публикаций
   filters: { search: "", category: "Все", importance: "Все", source: "Все" },
+  tab: "news",             // "news" | "reports"
+  reportType: "daily",     // "daily" | "weekly"
+  reportsCache: {},        // `${sourceId}:${reportType}` -> список отчётов
 };
 
 const $main = document.getElementById("main");
@@ -99,6 +94,7 @@ const ICONS = {
   pause: '<svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="3" y="2.5" width="2.4" height="8" fill="currentColor"/><rect x="7.6" y="2.5" width="2.4" height="8" fill="currentColor"/></svg>',
   settings: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.3"/><path d="M8 1.5v1.6M8 12.9v1.6M14.5 8h-1.6M3.1 8H1.5M12.6 3.4l-1.1 1.1M4.5 11.5l-1.1 1.1M12.6 12.6l-1.1-1.1M4.5 4.5L3.4 3.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>',
   refresh: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M12.25 7A5.25 5.25 0 1 1 10.6 3.15M12.25 1.75V4.9H9.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  eye: '<svg width="15" height="15" viewBox="0 0 15 15" fill="none"><path d="M1 7.5c1.4-2.4 4-4.5 6.5-4.5s5.1 2.1 6.5 4.5c-1.4 2.4-4 4.5-6.5 4.5S2.4 9.9 1 7.5Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><circle cx="7.5" cy="7.5" r="2" stroke="currentColor" stroke-width="1.2"/></svg>',
 };
 
 function groupIcon(groupName) {
@@ -187,11 +183,11 @@ function onSidebarClick(e) {
 async function openFeedView(sourceId, sourceName, groupName) {
   state.view = { type: "feed", sourceId, sourceName, groupName };
   state.filters = { search: "", category: "Все", importance: "Все", source: "Все" };
+  state.tab = "news";
   renderSidebar();
   renderFeedSkeleton(sourceName, sourceId);
   await loadNews(sourceId);
 }
-
 function renderFeedSkeleton(sourceName, sourceId) {
   const isGeneral = sourceId === "general";
   $main.innerHTML = `
@@ -235,6 +231,15 @@ function filteredNews() {
   });
 }
 
+function mainTabsHtml() {
+  return `
+    <div class="tabs">
+      <button class="tabs__item ${state.tab === "news" ? "is-active" : ""}" data-action="switch-tab" data-tab="news" type="button">Публикации</button>
+      <button class="tabs__item ${state.tab === "reports" ? "is-active" : ""}" data-action="switch-tab" data-tab="reports" type="button">Отчёты</button>
+    </div>
+  `;
+}
+
 function renderFeed() {
   const { sourceId, sourceName, groupName } = state.view;
   const isGeneral = sourceId === "general";
@@ -254,6 +259,8 @@ function renderFeed() {
       </div>
       <button class="btn btn--secondary" type="button">${isGeneral ? "Настройка потоков" : "Экспорт ленты"}</button>
     </div>
+
+    ${mainTabsHtml()}
 
     <div class="filters">
       <label class="filters__search">
@@ -282,6 +289,174 @@ function renderFeed() {
           <div class="h-m">Пока пусто</div>
           <p class="body-regular">Публикации появятся здесь после сбора данных источником${isGeneral ? " или добавления вручную" : ""}.</p>
         </div>`}
+    </div>
+  `;
+}
+
+// ---------------------------------------------------------------------
+// Отчёты (вкладка внутри ленты)
+// ---------------------------------------------------------------------
+
+function formatDateShort(iso) {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-");
+  return `${d}.${m}.${y}`;
+}
+
+function truncate(text, n) {
+  if (!text) return "";
+  return text.length > n ? text.slice(0, n).trim() + "…" : text;
+}
+
+function reportsCacheKey(sourceId, reportType) {
+  return `${sourceId}:${reportType}`;
+}
+
+function renderReportsView() {
+  const { sourceId, sourceName, groupName } = state.view;
+  const isGeneral = sourceId === "general";
+  const cacheKey = reportsCacheKey(sourceId, state.reportType);
+  const reports = state.reportsCache[cacheKey];
+
+  $main.innerHTML = `
+    ${!isGeneral ? `<div class="main__breadcrumb"><a data-action="open-feed" data-source="general" data-name="Общая лента" href="javascript:void(0)">${escapeHtml(groupName || "")}</a> / ${escapeHtml(sourceName)}</div>` : ""}
+    <div class="main__header">
+      <div>
+        <h1 class="h-xl">${isGeneral ? "Общая лента" : "Публикации " + escapeHtml(sourceName)}</h1>
+        <p>Отчёты по этой ленте</p>
+      </div>
+      <button class="btn btn--secondary" type="button">${isGeneral ? "Настройка потоков" : "Экспорт ленты"}</button>
+    </div>
+
+    ${mainTabsHtml()}
+
+    <div class="reports-toolbar">
+      <div class="tabs tabs--pill">
+        <button class="tabs__item ${state.reportType === "daily" ? "is-active" : ""}" data-action="switch-report-type" data-report-type="daily" type="button">Ежедневные</button>
+        <button class="tabs__item ${state.reportType === "weekly" ? "is-active" : ""}" data-action="switch-report-type" data-report-type="weekly" type="button">Еженедельные</button>
+      </div>
+      <button class="btn btn--primary" data-action="generate-report" type="button">
+        Сформировать ${state.reportType === "daily" ? "дневной" : "недельный"} отчёт
+      </button>
+    </div>
+
+    ${state.reportType === "daily" ? `<p class="reports-hint">Показаны последние 7 дневных отчётов.</p>` : ""}
+
+    <div id="reports-list">
+      ${reports === undefined ? `<div class="skeleton"></div><div class="skeleton"></div>` : renderReportsListOnly(reports)}
+    </div>
+  `;
+
+  if (reports === undefined) loadReports(sourceId, state.reportType);
+}
+
+function renderReportsListOnly(reports) {
+  if (!reports.length) {
+    return `
+      <div class="empty-state">
+        <div class="empty-state__icon">${ICONS.list}</div>
+        <div class="h-m">Отчётов пока нет</div>
+        <p class="body-regular">Нажмите «Сформировать», чтобы создать первый отчёт за ${state.reportType === "daily" ? "сегодня" : "эту неделю"}.</p>
+      </div>`;
+  }
+  return reports.map(reportCardHtml).join("");
+}
+
+function reportCardHtml(r) {
+  const periodLabel = r.report_type === "daily"
+    ? formatDateShort(r.period_start)
+    : `${formatDateShort(r.period_start)} – ${formatDateShort(r.period_end)}`;
+  return `
+    <article class="card" data-report-id="${r.id}">
+      <div class="card__top">
+        <div class="card__badges">
+          <span class="badge">${r.report_type === "daily" ? "Ежедневный" : "Еженедельный"}</span>
+          <span class="badge">${r.news_count} публикаций</span>
+        </div>
+        <span class="card__origin">${escapeHtml(periodLabel)}</span>
+      </div>
+      <h3 class="card__title" data-action="view-report">${escapeHtml(r.title)}</h3>
+      <p class="card__desc">${escapeHtml(truncate(r.content, 220))}</p>
+      <div class="card__footer">
+        <div class="card__meta"><span>Сформирован ${escapeHtml(r.created_at)}</span></div>
+        <div class="card__actions">
+          <button class="icon-btn" data-action="view-report" title="Открыть">${ICONS.eye}</button>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+async function loadReports(sourceId, reportType) {
+  try {
+    const data = await Api.getReports(sourceId, reportType);
+    state.reportsCache[reportsCacheKey(sourceId, reportType)] = data.reports;
+    const listEl = document.getElementById("reports-list");
+    if (listEl && state.view.sourceId === sourceId && state.tab === "reports" && state.reportType === reportType) {
+      listEl.innerHTML = renderReportsListOnly(data.reports);
+    }
+  } catch (err) {
+    const listEl = document.getElementById("reports-list");
+    if (listEl) listEl.innerHTML = `<div class="empty-state">Не удалось загрузить отчёты: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function generateReport() {
+  const { sourceId } = state.view;
+  const reportType = state.reportType;
+  const btn = document.querySelector("[data-action='generate-report']");
+  const originalLabel = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "Формирую…"; }
+
+  try {
+    const fn = reportType === "daily" ? Api.generateDailyReport : Api.generateWeeklyReport;
+    const { report } = await fn(sourceId);
+    const cacheKey = reportsCacheKey(sourceId, reportType);
+    const withoutSamePeriod = (state.reportsCache[cacheKey] || []).filter(
+      (r) => !(r.period_start === report.period_start && r.period_end === report.period_end)
+    );
+    const updated = [report, ...withoutSamePeriod];
+    state.reportsCache[cacheKey] = reportType === "daily" ? updated.slice(0, 7) : updated;
+    renderReportsView();
+    toast("Отчёт сформирован");
+  } catch (err) {
+    toast("Не удалось сформировать отчёт: " + err.message, "error");
+    if (btn) { btn.disabled = false; btn.textContent = originalLabel; }
+  }
+}
+
+function openReportViewModal(report) {
+  if (!report) return;
+  const periodLabel = report.report_type === "daily"
+    ? formatDateShort(report.period_start)
+    : `${formatDateShort(report.period_start)} – ${formatDateShort(report.period_end)}`;
+
+  $modalRoot.innerHTML = `
+    <div class="modal-overlay">
+      <div class="modal">
+        <div class="modal__header">
+          <h2 class="modal__title h-l">${escapeHtml(report.title)}</h2>
+          <button class="modal__close" data-action="close-modal">${ICONS.close}</button>
+        </div>
+
+        <div class="modal__section">
+          <div class="card__badges" style="margin-bottom:8px;">
+            <span class="badge">${report.report_type === "daily" ? "Ежедневный" : "Еженедельный"}</span>
+            <span class="badge">${report.news_count} публикаций</span>
+          </div>
+          <div style="color:var(--text-secondary, #6B7280); font-size:13px;">
+            ${escapeHtml(periodLabel)} · сформирован ${escapeHtml(report.created_at)} · ${escapeHtml(report.source_name)}
+          </div>
+        </div>
+
+        <div class="modal__section">
+          <div style="max-height:400px; overflow-y:auto; white-space:pre-wrap; line-height:1.6;">${escapeHtml(report.content)}</div>
+        </div>
+
+        <div class="modal__footer">
+          <button class="btn btn--secondary" data-action="close-modal">Закрыть</button>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -333,9 +508,10 @@ function newsCardHtml(n, isGeneral) {
           ${n.link ? `<a href="${escapeHtml(n.link)}" target="_blank" rel="noopener">Оригинал →</a>` : ""}
         </div>
         <div class="card__actions">
-          <button class="icon-btn" data-action="open-news" title="Открыть / редактировать">${ICONS.edit}</button>
           <button class="icon-btn" data-action="hide-news" title="Скрыть из ленты">${ICONS.eyeOff}</button>
           <button class="icon-btn icon-btn--danger" data-action="delete-news" title="Удалить">${ICONS.trash}</button>
+          <button class="icon-btn" data-action="view-news" title="Просмотр">${ICONS.eye}</button>
+          <button class="icon-btn" data-action="open-news" title="Открыть / редактировать">${ICONS.edit}</button>
         </div>
       </div>
     </article>
@@ -370,8 +546,40 @@ async function onMainClick(e) {
   const openFeedBtn = e.target.closest("[data-action='open-feed']");
   if (openFeedBtn) { openFeedView(openFeedBtn.dataset.source, openFeedBtn.dataset.name); return; }
 
+    const tabBtn = e.target.closest("[data-action='switch-tab']");
+  if (tabBtn) {
+    state.tab = tabBtn.dataset.tab;
+    if (state.tab === "reports") renderReportsView(); else renderFeed();
+    return;
+  }
+
+  const reportTypeBtn = e.target.closest("[data-action='switch-report-type']");
+  if (reportTypeBtn) {
+    state.reportType = reportTypeBtn.dataset.reportType;
+    renderReportsView();
+    return;
+  }
+
+  if (e.target.closest("[data-action='generate-report']")) {
+    await generateReport();
+    return;
+  }
+
+  const reportCard = e.target.closest("[data-report-id]");
+  if (reportCard && e.target.closest("[data-action='view-report']")) {
+    const cacheKey = reportsCacheKey(state.view.sourceId, state.reportType);
+    const report = (state.reportsCache[cacheKey] || []).find((r) => r.id === reportCard.dataset.reportId);
+    openReportViewModal(report);
+    return;
+  }
+
   const card = e.target.closest(".card");
   const newsId = card ? card.dataset.newsId : null;
+
+  if (e.target.closest("[data-action='view-news']") && newsId) {
+    openNewsViewModal(findNewsById(newsId));
+    return;
+  }
 
   if (e.target.closest("[data-action='open-news']") && newsId) {
     openNewsModal(findNewsById(newsId));
@@ -480,6 +688,13 @@ function openNewsModal(n) {
           </div>
         </div>
 
+        ${n.text ? `
+        <div class="field modal__section">
+          <label>Текст новости (исходный, не редактируется)</label>
+          <div style="max-height:220px; overflow-y:auto; white-space:pre-wrap; padding:9px 12px; border:1px solid var(--border); border-radius:6px; background:var(--bg-muted, #f7f7f8); color:var(--text-secondary, #555); font-size:14px; line-height:1.5;">${escapeHtml(n.text)}</div>
+        </div>
+        ` : ""}
+
         <div class="field modal__section">
           <label>Аннотация</label>
           <textarea id="edit-description" rows="4" style="width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:6px; resize:vertical;">${escapeHtml(n.description)}</textarea>
@@ -539,6 +754,12 @@ async function onModalClick(e) {
   }
 
   const modalEl = e.target.closest(".modal[data-news-id]");
+
+  if (modalEl && e.target.closest("[data-action='edit-from-view']")) {
+    openNewsModal(findNewsById(modalEl.dataset.newsId));
+    return;
+  }
+
   if (modalEl && e.target.closest("[data-action='save-news']")) {
     const id = modalEl.dataset.newsId;
     const fields = {
@@ -856,6 +1077,75 @@ async function submitQuickAddSource() {
   } catch (err) {
     toast("Не удалось добавить источник: " + err.message, "error");
   }
+}
+
+function openNewsViewModal(n) {
+  if (!n) return;
+
+  const facts = [
+    ["Кто", n.who], ["Что", n.what], ["Когда", n.when], ["Последствия", n.consequences],
+  ].filter(([, v]) => v);
+
+  $modalRoot.innerHTML = `
+    <div class="modal-overlay">
+      <div class="modal" data-news-id="${n.id}">
+        <div class="modal__header">
+          <h2 class="modal__title h-l">${n.object_type === "npa" ? "Цикл НПА" : "Просмотр публикации"}</h2>
+          <button class="modal__close" data-action="close-modal">${ICONS.close}</button>
+        </div>
+
+        <div class="modal__section">
+          <div class="card__badges" style="margin-bottom:8px;">
+            ${n.category ? `<span class="badge" style="${categoryStyle(n.category)}">${escapeHtml(n.category)}</span>` : ""}
+            ${n.importance ? `<span class="badge" style="${importanceStyle(n.importance)}">${escapeHtml(n.importance)}</span>` : ""}
+            ${n.object_type === "npa" ? `<span class="badge">НПА</span>` : ""}
+          </div>
+          <h3 style="margin:0; font-size:18px; font-weight:600;">${escapeHtml(n.title || "Без заголовка")}</h3>
+        </div>
+
+        ${n.description ? `
+        <div class="modal__section">
+          <label>Аннотация</label>
+          <p style="margin:4px 0 0; white-space:pre-wrap;">${escapeHtml(n.description)}</p>
+        </div>` : ""}
+
+        ${n.text ? `
+        <div class="modal__section">
+          <label>Текст новости</label>
+          <div style="max-height:320px; overflow-y:auto; white-space:pre-wrap; padding:9px 12px; border:1px solid var(--border); border-radius:6px; background:var(--bg-muted, #f7f7f8); font-size:14px; line-height:1.5;">${escapeHtml(n.text)}</div>
+        </div>` : ""}
+
+        ${facts.length ? `
+        <div class="modal__section">
+          <dl class="card__facts" style="margin-bottom:0;">
+            ${facts.map(([k, v]) => `<dt>${k}:</dt><dd>${escapeHtml(v)}</dd>`).join("")}
+          </dl>
+        </div>` : ""}
+
+        ${n.lifecycle && n.lifecycle.length ? `
+        <div class="modal__section">
+          <div class="timeline-wrap__label">Жизненный цикл · ${n.lifecycle.length} стадий</div>
+          ${lifecycleHtml(n.lifecycle)}
+        </div>` : ""}
+
+        ${n.tags && n.tags.length ? `
+        <div class="modal__section card__tags">${n.tags.map((t) => `<span class="card__tag">${escapeHtml(t)}</span>`).join("")}</div>` : ""}
+
+        <div class="modal__meta-row">
+          <span>Источник: ${escapeHtml(n.source_name || "—")} · ${escapeHtml(n.pub_date || "")}</span>
+          ${n.link ? `<a href="${escapeHtml(n.link)}" target="_blank" rel="noopener">Открыть оригинал →</a>` : ""}
+        </div>
+
+        <div class="modal__footer modal__footer--split">
+          <span></span>
+          <div style="display:flex; gap:8px;">
+            <button class="btn btn--secondary" data-action="close-modal">Закрыть</button>
+            <button class="btn btn--primary" data-action="edit-from-view">Редактировать</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 document.addEventListener("DOMContentLoaded", init);

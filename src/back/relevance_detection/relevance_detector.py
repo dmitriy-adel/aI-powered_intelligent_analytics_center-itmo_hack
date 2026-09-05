@@ -15,11 +15,6 @@ class RelevanceResult:
 
 
 class RelevanceDetector:
-    """
-    detector = RelevanceDetector()
-    result = detector.detect(source="TAdviser", title="...", text="...")
-    result.relevance, result.score
-    """
 
     def __init__(self, scorer: SimilarityScorer | None = None) -> None:
         self._scorer: SimilarityScorer = scorer or TfidfSimilarityScorer()
@@ -42,12 +37,6 @@ class RelevanceDetector:
         ]
 
     def _compute_score(self, result: PriorityResult) -> float:
-        """
-        Скор считается по той же ветке правил, что определила relevance
-        (компания -> регулятор -> конкурент -> domain-similarity), а не
-        независимым блендом сигналов — иначе возможен парадокс вида
-        "relevance=MEDIUM, но score=1.0".
-        """
         entity = result.entity_match
 
         if entity.company_mentioned:
@@ -62,6 +51,7 @@ class RelevanceDetector:
         domain_component: float = 0.0
         if SIMILARITY_HIGH_THRESHOLD:
             domain_component = min(1.0, result.max_domain_score / SIMILARITY_HIGH_THRESHOLD)
+            
         return round(domain_component, 3)
 
     def __repr__(self) -> str:

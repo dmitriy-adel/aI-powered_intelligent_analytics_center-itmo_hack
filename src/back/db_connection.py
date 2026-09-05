@@ -9,10 +9,12 @@ import psycopg2.extras
 # from dotenv import load_dotenv
 
 import tools
+from constants import _SOURCE_SELECT, NPA_SOURCES, _NEWS_SELECT
 
 # load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 class DBConnection:
+        
     def __init__(
         self,
         host: Optional[str] = None,
@@ -21,6 +23,10 @@ class DBConnection:
         user: Optional[str] = None,
         password: Optional[str] = None,
     ):
+        self._SOURCE_SELECT: str = _SOURCE_SELECT
+        self.NPA_SOURCES: str = NPA_SOURCES
+        self._NEWS_SELECT: str = _NEWS_SELECT
+
         self.host = host or os.environ.get("PGHOST", "localhost")
         self.dbname = dbname or os.environ.get("PGDATABASE", "itmo_hack")
         self.port = int(port or os.environ.get("PGPORT", "5432"))
@@ -88,45 +94,50 @@ class DBConnection:
         with conn.cursor() as cur:
             for stmt in statements:
                 cur.execute(stmt)
+
         conn.commit()
 
-    def get_sources_grouped(self) -> dict:
+    def get_sources_grouped(self) -> dict[str]:
         conn = self.connect()
-        query = """
-            SELECT s.id, s.name, s.url, s.url_rss, s.source_type, s.status,
-                   s.last_update_dt, s.category_default, s.poll_interval,
-                   COUNT(n.id) FILTER (WHERE NOT n.is_hidden) AS news_count
-            FROM sources s
-            LEFT JOIN news n ON n.source_id = s.id
+        query = self._SOURCE_SELECT + """
             GROUP BY s.id
             ORDER BY s.source_type, s.name;
         """
         with conn.cursor() as cur:
             cur.execute(query)
-            rows = cur.fetchall()
+            rows: list = cur.fetchall()
 
-        by_group = {}
+        by_group: dict[str, list] = {}
         for row in rows:
             source_out = self._source_row_to_api(row)
             by_group.setdefault(source_out["group"], []).append(source_out)
 
-        groups = [
+        groups: list[dict[str]] = [
             {"name": group_name, "sources": by_group[group_name]}
             for group_name in tools.GROUP_ORDER
             if group_name in by_group
         ]
-        for group_name in by_group:
-            if group_name not in tools.GROUP_ORDER:
-                groups.append({"name": group_name, "sources": by_group[group_name]})
+        groups.extend(
+            {"name": group_name, "sources": sources}
+            for group_name, sources in by_group.items()
+            if group_name not in tools.GROUP_ORDER
+        )
 
-        return {"general_count": self.get_general_count(), "groups": groups}
+        return {
+            "general_count": self.get_general_count(),
+            "groups": groups,
+        }
+    
+    def get_general_count(self) -> int:
+        conn = self.connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM ("
+                        " SELECT DISTINCT COALESCE(entity_id, id) FROM news"
+                        " WHERE in_general AND NOT is_hidden"
+                        ") t;")
+            return cur.fetchone()[0]
 
     def get_sources(self) -> dict:
-        """
-        Плоский формат {id: {...}} — то, что нужно парсерам (tg/web/npa) для
-        обхода источников. Отличается от get_sources_grouped(), который
-        отдаёт сгруппированную по типу структуру для API/фронтенда.
-        """
         conn = self.connect()
         query = """
             SELECT id, name, url, url_rss, source_type, status, last_update_dt, created_at
@@ -150,28 +161,6 @@ class DBConnection:
             }
         return result
 
-    # Источники НПА не заведены в seed_sources.sql — раньше npa-парсер писал
-    # только в JSON-файл, минуя БД. Регистрируем их лениво здесь, при первом
-    # запуске (name уникален — sources_name_unique, повторный вызов безопасен).
-    NPA_SOURCES: dict[str, dict[str, str]] = {
-        "government.ru": {
-            "name": "Правительство РФ (government.ru)",
-            "url": "https://government.ru",
-        },
-        "publication.pravo.gov.ru": {
-            "name": "Официальное опубликование правовых актов (pravo.gov.ru)",
-            "url": "http://publication.pravo.gov.ru",
-        },
-        "regulation.gov.ru": {
-            "name": "Федеральный портал проектов НПА (regulation.gov.ru)",
-            "url": "https://regulation.gov.ru",
-        },
-        "sozd.duma.gov.ru": {
-            "name": "Госдума — СОЗД (sozd.duma.gov.ru)",
-            "url": "https://sozd.duma.gov.ru",
-        },
-    }
-
     def ensure_npa_sources(self) -> dict[str, int]:
         """Регистрирует источники НПА в sources, если их там ещё нет. Возвращает {domain: source_id}."""
         conn = self.connect()
@@ -188,32 +177,20 @@ class DBConnection:
                 )
                 cur.execute("SELECT id FROM sources WHERE name = %s;", (info["name"],))
                 result[domain] = cur.fetchone()[0]
+
         conn.commit()
         return result
 
-
-        conn = self.connect()
-        with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM ("
-                        " SELECT DISTINCT COALESCE(entity_id, id) FROM news"
-                        " WHERE in_general AND NOT is_hidden"
-                        ") t;")
-            return cur.fetchone()[0]
-
     def get_source_by_id(self, source_id: int) -> Optional[dict]:
         conn = self.connect()
-        query = """
-            SELECT s.id, s.name, s.url, s.url_rss, s.source_type, s.status,
-                   s.last_update_dt, s.category_default, s.poll_interval,
-                   COUNT(n.id) FILTER (WHERE NOT n.is_hidden) AS news_count
-            FROM sources s
-            LEFT JOIN news n ON n.source_id = s.id
+        query = self._SOURCE_SELECT + """
             WHERE s.id = %s
             GROUP BY s.id;
         """
         with conn.cursor() as cur:
             cur.execute(query, (source_id,))
             row = cur.fetchone()
+
         return self._source_row_to_api(row) if row else None
 
     def add_source(self, name, url, group, source_type, category_default, poll_interval) -> dict:
@@ -227,6 +204,7 @@ class DBConnection:
         with conn.cursor() as cur:
             cur.execute(query, (name, url, url, resolved_type, category_default, poll_interval))
             new_id = cur.fetchone()[0]
+
         conn.commit()
         return self.get_source_by_id(new_id)
 
@@ -254,6 +232,7 @@ class DBConnection:
             allowed=("name", "url", "status", "category_default", "poll_interval"),
             returning="id",
         )
+
         if built is None:
             return self.get_source_by_id(source_id)
 
@@ -261,9 +240,11 @@ class DBConnection:
         with conn.cursor() as cur:
             cur.execute(query, params)
             row = cur.fetchone()
+
         conn.commit()
         if row is None:
             return None
+        
         return self.get_source_by_id(row[0])
 
     def remove_source(self, source_id: int) -> bool:
@@ -272,6 +253,7 @@ class DBConnection:
             cur.execute("DELETE FROM news WHERE source_id = %s;", (source_id,))
             cur.execute("DELETE FROM sources WHERE id = %s;", (source_id,))
             deleted = cur.rowcount
+
         conn.commit()
         return deleted > 0
 
@@ -280,6 +262,7 @@ class DBConnection:
         dt = dt or datetime.utcnow()
         with conn.cursor() as cur:
             cur.execute("UPDATE sources SET last_update_dt = %s WHERE id = %s;", (dt, source_id))
+
         conn.commit()
 
     @staticmethod
@@ -301,25 +284,6 @@ class DBConnection:
             "count": news_count or 0,
         }
 
-    _NEWS_SELECT = """
-        SELECT n.id, n.source_id, n.source, n.title, n.url, n.author,
-               n.category, n.priority, n.description, n.lifetime, n.created_at,
-               n.company_mentions, n.regulatory_changes, n.fact_when, n.consequences,
-               n.tags, n.in_general, n.is_hidden, n.text,
-               s.name AS source_display_name,
-               e.object_id, e.object_type, e.events AS entity_events,
-               CASE
-                 WHEN n.entity_id IS NULL THEN 1
-                 ELSE (
-                   SELECT COUNT(*)::int FROM news nx
-                   WHERE nx.entity_id = n.entity_id AND NOT nx.is_hidden
-                 )
-               END AS plot_count
-        FROM news n
-        LEFT JOIN sources s ON s.id = n.source_id
-        LEFT JOIN entities e ON e.id = n.entity_id
-    """
-
     def get_news_general(self) -> list:
         conn = self.connect()
         inner = self._NEWS_SELECT.replace(
@@ -329,13 +293,15 @@ class DBConnection:
         )
         query = inner + """
             WHERE n.in_general AND NOT n.is_hidden
+            AND (n.source_id IS NULL OR COALESCE(n.relevance_score, 0) > 0)
             ORDER BY COALESCE(n.entity_id, n.id),
-                     (COALESCE(n.description, '') = '') ASC,
-                     COALESCE(n.lifetime, n.created_at) DESC;
+                    (COALESCE(n.description, '') = '') ASC,
+                    COALESCE(n.lifetime, n.created_at) DESC;
         """
         with conn.cursor() as cur:
             cur.execute(query)
             rows = cur.fetchall()
+
         rows.sort(key=lambda r: str(r[9] or r[10] or ""), reverse=True)
         return [self._news_row_to_api(row) for row in rows]
 
@@ -348,11 +314,13 @@ class DBConnection:
         with conn.cursor() as cur:
             cur.execute(query)
             rows = cur.fetchall()
+
         return [self._news_row_to_api(row) for row in rows]
 
     def get_news_by_source(self, source_id: int) -> Optional[list]:
         if self.get_source_by_id(source_id) is None:
             return None
+        
         conn = self.connect()
         query = self._NEWS_SELECT + """
             WHERE n.source_id = %s AND NOT n.is_hidden
@@ -361,6 +329,7 @@ class DBConnection:
         with conn.cursor() as cur:
             cur.execute(query, (source_id,))
             rows = cur.fetchall()
+
         return [self._news_row_to_api(row) for row in rows]
 
     def get_news_by_id(self, news_id: int) -> Optional[dict]:
@@ -369,6 +338,7 @@ class DBConnection:
         with conn.cursor() as cur:
             cur.execute(query, (news_id,))
             row = cur.fetchone()
+
         return self._news_row_to_api(row) if row else None
 
     def get_existing_urls(self, source_id) -> set:
@@ -377,24 +347,9 @@ class DBConnection:
             cur.execute("SELECT url FROM news WHERE source_id = %s;", (source_id,))
             return {row[0] for row in cur.fetchall()}
 
-    def add_parsed_news(
-        self,
-        source_id: int,
-        source: str,
-        title: Optional[str],
-        url: str,
-        author: Optional[str],
-        category: Optional[str],
-        text: Optional[str],
-        priority: Optional[str] = None,
-        relevance_score: Optional[float] = None,
-    ) -> int:
-        """
-        Вставка от парсеров (tg/web/npa) — простая позиционная сигнатура,
-        которой они уже пользовались раньше через свои локальные
-        db_connection.py. Отдельно от add_news(payload) ниже: тот — под API
-        (ручное добавление новости из UI), другой формат данных.
-        """
+    def add_parsed_news(self, source_id: int, source: str, title: Optional[str], url: str, author: Optional[str], 
+                        category: Optional[str], text: Optional[str], priority: Optional[str] = None, 
+                        relevance_score: Optional[float] = None) -> int:
         conn = self.connect()
         query = """
             INSERT INTO news (
@@ -413,6 +368,7 @@ class DBConnection:
                 (source_id, source, title, url, author, category, text, priority, relevance_score),
             )
             new_id: int = cur.fetchone()[0]
+
         conn.commit()
         return new_id
 
@@ -426,7 +382,8 @@ class DBConnection:
             source_id = int(raw_source)
             source_row = self.get_source_by_id(source_id)
             if source_row is None:
-                raise ValueError(f"Источник с id={raw_source} не найден")
+                raise ValueError(f"source with id={raw_source} wasnt found")
+            
             source_text = source_row["name"]
 
         added_manually = source_id is None
@@ -467,6 +424,7 @@ class DBConnection:
         with conn.cursor() as cur:
             cur.execute(query, params)
             new_id = cur.fetchone()[0]
+
         conn.commit()
         return self.get_news_by_id(new_id)
 
@@ -485,10 +443,13 @@ class DBConnection:
         }
         if fields.get("importance"):
             db_fields["priority"] = tools.priority_to_db(fields.get("importance"))
+
         if fields.get("who") is not None:
             db_fields["company_mentions"] = tools.to_jsonb(fields.get("who"))
+
         if fields.get("what") is not None:
             db_fields["regulatory_changes"] = tools.to_jsonb(fields.get("what"))
+
         if fields.get("consequences") is not None:
             db_fields["consequences"] = tools.to_jsonb(fields.get("consequences"))
 
@@ -497,6 +458,7 @@ class DBConnection:
             "is_hidden", "fact_when", "priority", "company_mentions",
             "regulatory_changes", "consequences",
         )
+
         built = tools.build_update_query("news", "id", news_id, db_fields, allowed=allowed, returning="id")
         if built is None:
             return self.get_news_by_id(news_id)
@@ -505,9 +467,11 @@ class DBConnection:
         with conn.cursor() as cur:
             cur.execute(query, params)
             row = cur.fetchone()
+
         conn.commit()
         if row is None:
             return None
+        
         return self.get_news_by_id(row[0])
 
     def remove_news(self, news_id: int) -> bool:
@@ -515,6 +479,7 @@ class DBConnection:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM news WHERE id = %s;", (news_id,))
             deleted = cur.rowcount
+
         conn.commit()
         return deleted > 0
 
@@ -522,31 +487,40 @@ class DBConnection:
     def _parse_pub_date(value) -> Optional[datetime]:
         if not value:
             return None
+        
         if isinstance(value, datetime):
             return value
+        
         for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d", "%d.%m.%Y %H:%M", "%d.%m.%Y"):
             try:
                 return datetime.strptime(value, fmt)
+            
             except ValueError:
                 continue
+
         return None
 
     @staticmethod
     def _lifecycle_to_api(raw) -> list:
         if not raw:
             return []
+        
         if isinstance(raw, str):
             try:
                 raw = json.loads(raw)
+
             except ValueError:
                 return []
+            
         out = []
         for ev in raw or []:
             if not isinstance(ev, dict):
                 continue
+
             title = (ev.get("title") or ev.get("stage") or "").strip()
             if not title:
                 continue
+
             out.append(
                 {
                     "date": ev.get("date") or "",
@@ -557,9 +531,11 @@ class DBConnection:
                     "source": ev.get("source") or "",
                 }
             )
+
         dated = [x for x in out if x.get("date")]
         empty = [x for x in out if not x.get("date")]
         dated.sort(key=lambda item: item.get("date") or "")
+
         return dated + empty
 
     @staticmethod
@@ -570,6 +546,7 @@ class DBConnection:
             company_mentions, regulatory_changes, fact_when, consequences,
             tags, in_general, is_hidden, text, source_display_name,
             object_id, object_type, entity_events, plot_count,
+            relevance_score,
         ) = row
 
         added_manually = source_id is None
@@ -602,4 +579,6 @@ class DBConnection:
             "object_type": object_type,
             "plot_count": extra_sources,
             "lifecycle": DBConnection._lifecycle_to_api(entity_events),
+            "relevance_score": relevance_score,
+            "text": text or "",
         }

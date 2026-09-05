@@ -91,18 +91,25 @@ button { cursor: pointer; }
 }
 
 .sidebar__brand-icon {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  background: var(--blue);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
+  width: 40px;
+  height: 40px;
   flex: none;
 }
 
-.sidebar__brand-name { font-size: 15px; font-weight: 600; }
+
+.sidebar__brand-icon img {
+  display: block;
+  width: 40px;
+  height: 40px;
+}
+
+.sidebar__brand-name {
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 13px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
 
 .sidebar__scroll {
   flex: 1;
@@ -676,4 +683,73 @@ table.sources-table { width: 100%; border-collapse: collapse; }
   .sidebar { width: 100%; height: auto; position: relative; border-right: none; border-bottom: 1px solid var(--border); }
   .main { padding: 20px; }
   .modal__grid-2, .quick-add__grid { grid-template-columns: 1fr; }
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Tabs (Публикации / Отчёты, Ежедневные / Еженедельные)               */
+/* ------------------------------------------------------------------ */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tabs__item {
+  padding: 8px 14px;
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary, #6B7280);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.tabs__item:hover { color: var(--text-primary, #111827); }
+
+.tabs__item.is-active {
+  color: var(--blue);
+  border-bottom-color: var(--blue);
+  font-weight: 600;
+}
+
+/* Вложенный переключатель (дневные/недельные) — компактнее и без нижней
+   линии, чтобы визуально не путался с основными вкладками Публикации/Отчёты */
+.tabs--pill {
+  border-bottom: none;
+  margin-bottom: 0;
+  background: var(--bg);
+  padding: 3px;
+  border-radius: 8px;
+  display: inline-flex;
+}
+
+.tabs--pill .tabs__item {
+  border-bottom: none;
+  border-radius: 6px;
+  padding: 6px 12px;
+  margin-bottom: 0;
+}
+
+.tabs--pill .tabs__item.is-active {
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+}
+
+.reports-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.reports-hint {
+  font-size: 13px;
+  color: var(--text-secondary, #6B7280);
+  margin-bottom: 16px;
 }

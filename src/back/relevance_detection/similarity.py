@@ -12,8 +12,6 @@ _morph: pymorphy3.MorphAnalyzer = pymorphy3.MorphAnalyzer()
 _token_re: re.Pattern[str] = re.compile(r"[а-яёa-z0-9]+", re.IGNORECASE)
 _po_abbrev_re: re.Pattern[str] = re.compile(r"\bПО\b")
 
-# Частотные предлоги/союзы, неотличимые от содержательных омонимов после
-# lowercase (классика — предлог "по" и аббревиатура "ПО").
 RUSSIAN_STOPWORDS: list[str] = [
     "по", "на", "из", "от", "до", "при", "для", "же", "бы", "ли", "что",
     "как", "это", "то", "не", "ни", "за", "под", "над", "об", "во", "со",
@@ -24,14 +22,10 @@ RUSSIAN_STOPWORDS: list[str] = [
 
 
 def lemmatize(text: str) -> str:
-    """
-    Приводит слова к нормальной форме. Аббревиатуру "ПО" подменяем уникальным
-    маркером до lowercase, чтобы не путать её с предлогом "по" (иначе оба слова
-    после нормализации неразличимы).
-    """
     text = _po_abbrev_re.sub("программноеобеспечение", text)
     tokens: list[str] = _token_re.findall(text.lower())
     lemmas: list[str] = [_morph.parse(t)[0].normal_form for t in tokens]
+
     return " ".join(w for w in lemmas if w not in RUSSIAN_STOPWORDS)
 
 
@@ -50,12 +44,10 @@ class TfidfSimilarityScorer(SimilarityScorer):
 
     def score(self, text: str) -> dict[str, float]:
         corpus: list[str] = self.domain_texts + [lemmatize(text)]
-        # ngram_range=(2,2) — только биграммы. Отдельные слова вроде
-        # "программный" дают случайные пересечения между несвязанными
-        # текстами; пары слов подряд — гораздо более специфичный сигнал.
         vectorizer: TfidfVectorizer = TfidfVectorizer(ngram_range=(2, 2))
         try:
             tfidf = vectorizer.fit_transform(corpus)
+            
         except ValueError:
             return {d.name: 0.0 for d in self.domains}
 
