@@ -6,6 +6,7 @@ CREATE TYPE source_type_enum AS ENUM ('СМИ', 'Регулятор', 'Telegram'
 CREATE TYPE source_status_enum AS ENUM ('active', 'paused', 'error');
 CREATE TYPE news_priority_enum AS ENUM ('low', 'mid', 'high');
 CREATE TYPE user_status_enum AS ENUM ('user', 'admin');
+CREATE TYPE report_status_enum AS ENUM ('pending', 'ready', 'failed');
 
 CREATE TABLE sources (
     id              BIGSERIAL PRIMARY KEY,
@@ -102,20 +103,32 @@ CREATE TABLE users (
 
 CREATE INDEX idx_users_status ON users (status);
 
-insert into sources(name, url, url_rss, source_type, status) values
-('Цифровые индустриальные технологии - дайджест', 'https://t.me/cit_gov', '-', 'Telegram', 'active'),
-('РФРИТ', 'https://t.me/rfrit', '-', 'Telegram', 'active'),
-('Гранты для ИТ', 'https://t.me/grantsforbussines', '-', 'Telegram', 'active'),
-('CIO: канал IT руководителей', 'https://t.me/cio_channel', '-', 'Telegram', 'active'),
-('Торгпред - тендеры и закупки', 'https://t.me/rustorgpred', '-', 'Telegram', 'active'),
-('Правительство РФ - сводки', 'https://t.me/government_rus', '-', 'Telegram', 'active'),
-('АРПЭ - новости', 'https://t.me/arperf', '-', 'Telegram', 'active'),
-('ЦИПР - новости и анонсы мероприятий', 'https://t.me/icipr', '-', 'Telegram', 'active'),
-('Правовой комитет АРПП', 'https://arppsoft.ru/boards/law/', '-', 'Регулятор', 'error'),
-('АРПП - новости', 'https://t.me/arppsoft', '-', 'СМИ', 'error'),
-('Ведомости', 'https://www.vedomosti.ru', 'https://www.vedomosti.ru/rss/news.xml', 'СМИ', 'active'),
-('Коммерсант', 'https://www.kommersant.ru', 'https://www.kommersant.ru/rss/news.xml', 'СМИ', 'active'),
-('Кабельщик', 'https://www.cableman.ru', '-', 'СМИ', 'error'),
-('Телеспутник', 'https://telesputnik.ru', 'https://telesputnik.ru/rss/', 'СМИ', 'active');
+CREATE TABLE reports (
+    id                      BIGSERIAL PRIMARY KEY,
+    report_type             TEXT NOT NULL,
+    title                   TEXT NOT NULL,                      
+    summary                 TEXT,
+    status                  report_status_enum NOT NULL DEFAULT 'pending',
+    priority_breakdown      JSONB,                              -- {"high": 5, "mid": 12, "low": 30}
+    created_period_start    TIMESTAMPTZ NOT NULL,
+    created_period_end      TIMESTAMPTZ NOT NULL,
+    used_news               BIGINT[] NOT NULL DEFAULT '{}',    -- id новостей (news.id), вошедших в отчёт
+    used_sources            BIGINT[] NOT NULL DEFAULT '{}',    -- id источников (sources.id), вошедших в отчёт
+    created_by_role         TEXT NOT NULL DEFAULT 'admin',
+    is_archived             BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT reports_type_check CHECK (report_type IN ('daily', 'weekly')),
+    CONSTRAINT reports_period_check CHECK (created_period_end >= created_period_start)
+);
+
+CREATE INDEX idx_reports_report_type ON reports (report_type);
+CREATE INDEX idx_reports_status ON reports (status);
+CREATE INDEX idx_reports_created_at ON reports (created_at);
+CREATE INDEX idx_reports_period ON reports (created_period_start, created_period_end);
+CREATE INDEX idx_reports_used_news ON reports USING GIN (used_news);
+CREATE INDEX idx_reports_used_sources ON reports USING GIN (used_sources);
+CREATE INDEX idx_reports_priority_breakdown ON reports USING GIN (priority_breakdown);
+CREATE INDEX IF NOT EXISTS idx_reports_is_archived ON reports (is_archived);
 
 COMMIT;
