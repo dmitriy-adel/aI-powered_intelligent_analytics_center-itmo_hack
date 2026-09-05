@@ -6,11 +6,11 @@ from typing import Optional
 
 import psycopg2
 import psycopg2.extras
-from dotenv import load_dotenv
+# from dotenv import load_dotenv
 
 import tools
 
-load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+# load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 class DBConnection:
     def __init__(
@@ -121,7 +121,77 @@ class DBConnection:
 
         return {"general_count": self.get_general_count(), "groups": groups}
 
-    def get_general_count(self) -> int:
+    def get_sources(self) -> dict:
+        """
+        Плоский формат {id: {...}} — то, что нужно парсерам (tg/web/npa) для
+        обхода источников. Отличается от get_sources_grouped(), который
+        отдаёт сгруппированную по типу структуру для API/фронтенда.
+        """
+        conn = self.connect()
+        query = """
+            SELECT id, name, url, url_rss, source_type, status, last_update_dt, created_at
+            FROM sources;
+        """
+        with conn.cursor() as cur:
+            cur.execute(query)
+            rows = cur.fetchall()
+
+        result = {}
+        for row in rows:
+            (source_id, name, url, url_rss, source_type, status, last_update_dt, created_at) = row
+            result[source_id] = {
+                "name": name,
+                "url": url,
+                "url_rss": url_rss,
+                "source_type": source_type,
+                "status": status,
+                "last_update_dt": last_update_dt,
+                "created_at": created_at,
+            }
+        return result
+
+    # Источники НПА не заведены в seed_sources.sql — раньше npa-парсер писал
+    # только в JSON-файл, минуя БД. Регистрируем их лениво здесь, при первом
+    # запуске (name уникален — sources_name_unique, повторный вызов безопасен).
+    NPA_SOURCES: dict[str, dict[str, str]] = {
+        "government.ru": {
+            "name": "Правительство РФ (government.ru)",
+            "url": "https://government.ru",
+        },
+        "publication.pravo.gov.ru": {
+            "name": "Официальное опубликование правовых актов (pravo.gov.ru)",
+            "url": "http://publication.pravo.gov.ru",
+        },
+        "regulation.gov.ru": {
+            "name": "Федеральный портал проектов НПА (regulation.gov.ru)",
+            "url": "https://regulation.gov.ru",
+        },
+        "sozd.duma.gov.ru": {
+            "name": "Госдума — СОЗД (sozd.duma.gov.ru)",
+            "url": "https://sozd.duma.gov.ru",
+        },
+    }
+
+    def ensure_npa_sources(self) -> dict[str, int]:
+        """Регистрирует источники НПА в sources, если их там ещё нет. Возвращает {domain: source_id}."""
+        conn = self.connect()
+        result: dict[str, int] = {}
+        with conn.cursor() as cur:
+            for domain, info in self.NPA_SOURCES.items():
+                cur.execute(
+                    """
+                    INSERT INTO sources (name, url, source_type, status)
+                    VALUES (%s, %s, 'Регулятор', 'active')
+                    ON CONFLICT (name) DO NOTHING;
+                    """,
+                    (info["name"], info["url"]),
+                )
+                cur.execute("SELECT id FROM sources WHERE name = %s;", (info["name"],))
+                result[domain] = cur.fetchone()[0]
+        conn.commit()
+        return result
+
+
         conn = self.connect()
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM ("
@@ -306,6 +376,45 @@ class DBConnection:
         with conn.cursor() as cur:
             cur.execute("SELECT url FROM news WHERE source_id = %s;", (source_id,))
             return {row[0] for row in cur.fetchall()}
+
+    def add_parsed_news(
+        self,
+        source_id: int,
+        source: str,
+        title: Optional[str],
+        url: str,
+        author: Optional[str],
+        category: Optional[str],
+        text: Optional[str],
+        priority: Optional[str] = None,
+        relevance_score: Optional[float] = None,
+    ) -> int:
+        """
+        Вставка от парсеров (tg/web/npa) — простая позиционная сигнатура,
+        которой они уже пользовались раньше через свои локальные
+        db_connection.py. Отдельно от add_news(payload) ниже: тот — под API
+        (ручное добавление новости из UI), другой формат данных.
+        """
+        conn = self.connect()
+        query = """
+            INSERT INTO news (
+                source_id, source, title, url, author, category, text,
+                priority, relevance_score
+            )
+            VALUES (
+                %s, %s, COALESCE(%s, 'Без заголовка'), %s, %s, COALESCE(%s, 'Экономика'), %s,
+                COALESCE(%s::news_priority_enum, 'low'::news_priority_enum), %s
+            )
+            RETURNING id;
+        """
+        with conn.cursor() as cur:
+            cur.execute(
+                query,
+                (source_id, source, title, url, author, category, text, priority, relevance_score),
+            )
+            new_id: int = cur.fetchone()[0]
+        conn.commit()
+        return new_id
 
     def add_news(self, payload: dict) -> dict:
         conn = self.connect()
