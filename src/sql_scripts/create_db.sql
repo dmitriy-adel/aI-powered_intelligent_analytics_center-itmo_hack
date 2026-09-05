@@ -70,6 +70,8 @@ CREATE INDEX idx_entities_object_type ON entities (object_type);
 
 ALTER TABLE news ADD COLUMN source_id BIGINT REFERENCES sources(id);
 ALTER TABLE news ADD COLUMN entity_id BIGINT REFERENCES entities(id);
+ALTER TABLE news ADD COLUMN relevance_score FLOAT;
+
 CREATE INDEX idx_news_source_id ON news (source_id);
 CREATE INDEX idx_news_entity_id ON news (entity_id);
 

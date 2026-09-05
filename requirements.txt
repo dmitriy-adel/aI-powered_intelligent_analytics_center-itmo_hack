@@ -8,3 +8,11 @@ requests>=2.31.0
 beautifulsoup4>=4.12.0
 lxml>=5.0.0
 python-dotenv>=1.0.0
+
+# RelevanceDetection
+pandas>3.0.0
+natasha==1.6.0            
+rapidfuzz==3.14.6         
+scikit-learn==1.8.0       
+pymorphy3==2.0.6          
+pymorphy3-dicts-ru==2.4.417150.4580142
