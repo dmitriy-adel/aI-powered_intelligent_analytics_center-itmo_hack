@@ -8,7 +8,8 @@ from psycopg2.extras import Json
 
 from constants import (STATUS_DB_TO_API, STATUS_API_TO_DB, PRIORITY_DB_TO_API, PRIORITY_API_TO_DB, 
                        PRIORITY_API_TO_DB, GROUP_TO_TYPE, TYPE_TO_GROUP)
- 
+
+GROUP_ORDER = ["СМИ", "Регуляторы", "Telegram"]
  
 def status_to_api(db_value: Optional[str]) -> str:
     return STATUS_DB_TO_API.get(db_value, db_value or "Активен")
