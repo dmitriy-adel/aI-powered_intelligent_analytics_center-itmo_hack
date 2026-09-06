@@ -27,8 +27,9 @@ from ai.regulatory_store import (
 )
 from ai.schema_npa import EXTRACT_SCHEMA, JUDGE_SCHEMA
 
-DEFAULT_EMBED_MIN_SCORE = 0.60
-DEFAULT_EMBED_AUTO_SAME = 0.75
+# Ставка на precision: ниже 0.80 новая карточка, ≥0.90 автосклейка.
+DEFAULT_EMBED_MIN_SCORE = 0.80
+DEFAULT_EMBED_AUTO_SAME = 0.90
 
 def _as_article(item: dict) -> dict:
     if "raw" in item and isinstance(item["raw"], dict):
