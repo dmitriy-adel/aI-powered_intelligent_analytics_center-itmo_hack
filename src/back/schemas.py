@@ -129,3 +129,25 @@ class OkResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     error: str
+
+class ReportOut(BaseModel):
+    id: str
+    report_type: str
+    title: str
+    content: str = ""
+    status: Optional[str] = None
+    news_count: int = 0
+    period_start: str = ""
+    period_end: str = ""
+    created_at: str = ""
+    source_name: str = "Общая лента"
+
+class GetReportsResponse(BaseModel):
+    reports: List[ReportOut]
+
+class GenerateReportRequest(BaseModel):
+    source: Optional[str] = "general"
+    type: str = "daily"
+
+class GenerateReportResponse(BaseModel):
+    report: ReportOut

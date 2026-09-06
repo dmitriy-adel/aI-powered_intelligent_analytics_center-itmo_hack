@@ -147,3 +147,18 @@ def remove_news(payload: schemas.RemoveNewsRequest):
     
     return {"ok": True}
 
+
+@app.get("/get_reports", response_model=schemas.GetReportsResponse)
+def get_reports(source: str = "general", type: str = "daily"):
+    report_type = type if type in ("daily", "weekly") else "daily"
+    return {"reports": db.list_reports(report_type)}
+
+
+@app.post("/generate_report", response_model=schemas.GenerateReportResponse)
+def generate_report(payload: schemas.GenerateReportRequest):
+    report_type = payload.type if payload.type in ("daily", "weekly") else "daily"
+    existing = db.list_reports(report_type)
+    if existing:
+        return {"report": existing[0]}
+    raise HTTPException(status_code=404, detail="Отчёт ещё не сформирован. Запустите ночной пайплайн.")
+

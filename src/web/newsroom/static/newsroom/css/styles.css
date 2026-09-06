@@ -638,6 +638,33 @@ table.sources-table { width: 100%; border-collapse: collapse; }
   padding-top: 14px;
   border-top: 1px solid var(--border);
 }
+
+.report-md {
+  max-height: 480px;
+  overflow-y: auto;
+  line-height: 1.6;
+  color: var(--text-primary, #111);
+  font-size: 14px;
+}
+.report-md__h {
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-weight: 600;
+}
+.report-md__p { margin: 0 0 10px; }
+.report-md__rule {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+.report-md__list {
+  margin: 0;
+  padding-left: 22px;
+  list-style: decimal;
+}
+.report-md__list li { margin: 0 0 12px; }
+.report-md__list li:last-child { margin-bottom: 0; }
+.report-md strong { font-weight: 650; }
 .modal__footer--split { justify-content: space-between; }
 
 .tag-input {

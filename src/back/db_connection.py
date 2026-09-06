@@ -1,6 +1,7 @@
 import json
 import os
 from datetime import datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Optional
 
@@ -43,6 +44,7 @@ class DBConnection:
                 user=self.user,
                 password=self.password,
             )
+            self.conn.autocommit = True
         return self.conn
 
     def close(self):
@@ -90,6 +92,36 @@ class DBConnection:
             "CREATE INDEX IF NOT EXISTS idx_entities_object_type ON entities (object_type);",
             "ALTER TABLE news ADD COLUMN IF NOT EXISTS entity_id BIGINT REFERENCES entities(id);",
             "CREATE INDEX IF NOT EXISTS idx_news_entity_id ON news (entity_id);",
+            "ALTER TABLE news ADD COLUMN IF NOT EXISTS relevance_score FLOAT;",
+            """
+            DO $$ BEGIN
+                CREATE TYPE report_status_enum AS ENUM ('pending', 'ready', 'failed');
+            EXCEPTION
+                WHEN duplicate_object THEN NULL;
+            END $$;
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS reports (
+                id                      BIGSERIAL PRIMARY KEY,
+                report_type             TEXT NOT NULL,
+                title                   TEXT NOT NULL,
+                summary                 TEXT,
+                status                  report_status_enum NOT NULL DEFAULT 'pending',
+                priority_breakdown      JSONB,
+                created_period_start    TIMESTAMPTZ NOT NULL,
+                created_period_end      TIMESTAMPTZ NOT NULL,
+                used_news               BIGINT[] NOT NULL DEFAULT '{}',
+                used_sources            BIGINT[] NOT NULL DEFAULT '{}',
+                created_by_role         TEXT NOT NULL DEFAULT 'admin',
+                is_archived             BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+                CONSTRAINT reports_type_check CHECK (report_type IN ('daily', 'weekly')),
+                CONSTRAINT reports_period_check CHECK (created_period_end >= created_period_start)
+            );
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_reports_report_type ON reports (report_type);",
+            "CREATE INDEX IF NOT EXISTS idx_reports_period ON reports (created_period_start, created_period_end);",
+            "CREATE INDEX IF NOT EXISTS idx_reports_is_archived ON reports (is_archived);",
         ]
         with conn.cursor() as cur:
             for stmt in statements:
@@ -490,10 +522,24 @@ class DBConnection:
         
         if isinstance(value, datetime):
             return value
+
+        text = str(value).strip()
+        if not text or text in {"—", "-"}:
+            return None
+
+        try:
+            return parsedate_to_datetime(text)
+        except (TypeError, ValueError, IndexError):
+            pass
+
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            pass
         
         for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d", "%d.%m.%Y %H:%M", "%d.%m.%Y"):
             try:
-                return datetime.strptime(value, fmt)
+                return datetime.strptime(text, fmt)
             
             except ValueError:
                 continue
@@ -582,3 +628,312 @@ class DBConnection:
             "relevance_score": relevance_score,
             "text": text or "",
         }
+
+    def get_news_for_brief(
+        self,
+        period_start,
+        period_end,
+        *,
+        min_score: float = 0.5,
+        limit: int = 40,
+    ) -> list[dict]:
+        """Новости из БД для брифа: уже обработанные, скор > порога, сверху вниз по релевантности."""
+        conn = self.connect()
+        query = """
+            SELECT n.id, n.source_id, COALESCE(s.name, n.source) AS source_name,
+                   n.title, n.url, n.description, n.text, n.priority,
+                   n.relevance_score, COALESCE(n.lifetime, n.created_at) AS pub_dt
+            FROM news n
+            LEFT JOIN sources s ON s.id = n.source_id
+            WHERE NOT n.is_hidden
+              AND COALESCE(n.relevance_score, 0) > %s
+              AND COALESCE(n.lifetime, n.created_at) >= %s
+              AND COALESCE(n.lifetime, n.created_at) < %s
+            ORDER BY n.relevance_score DESC NULLS LAST,
+                     COALESCE(n.lifetime, n.created_at) DESC
+            LIMIT %s;
+        """
+        with conn.cursor() as cur:
+            cur.execute(query, (min_score, period_start, period_end, limit))
+            rows = cur.fetchall()
+
+        out = []
+        for row in rows:
+            (
+                news_id, source_id, source_name, title, url, description,
+                text, priority, score, pub_dt,
+            ) = row
+            out.append(
+                {
+                    "id": news_id,
+                    "source_id": source_id,
+                    "source": source_name,
+                    "title": title,
+                    "link": url or "",
+                    "description": description or "",
+                    "text": text or "",
+                    "priority": priority,
+                    "relevance_score": float(score or 0),
+                    "pub_date": pub_dt.isoformat() if pub_dt else "",
+                }
+            )
+        return out
+
+    def upsert_report(
+        self,
+        *,
+        report_type: str,
+        title: str,
+        summary: str,
+        period_start,
+        period_end,
+        used_news: list,
+        used_sources: list,
+        status: str = "ready",
+        priority_breakdown: Optional[dict] = None,
+    ) -> int:
+        conn = self.connect()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id FROM reports
+                WHERE report_type = %s
+                  AND created_period_start = %s
+                  AND created_period_end = %s
+                LIMIT 1;
+                """,
+                (report_type, period_start, period_end),
+            )
+            found = cur.fetchone()
+            if found:
+                cur.execute(
+                    """
+                    UPDATE reports
+                    SET title = %s, summary = %s, status = %s,
+                        priority_breakdown = %s, used_news = %s, used_sources = %s,
+                        is_archived = FALSE
+                    WHERE id = %s
+                    RETURNING id;
+                    """,
+                    (
+                        title,
+                        summary,
+                        status,
+                        tools.to_jsonb(priority_breakdown),
+                        used_news or [],
+                        used_sources or [],
+                        found[0],
+                    ),
+                )
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO reports (
+                        report_type, title, summary, status, priority_breakdown,
+                        created_period_start, created_period_end, used_news, used_sources
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id;
+                    """,
+                    (
+                        report_type,
+                        title,
+                        summary,
+                        status,
+                        tools.to_jsonb(priority_breakdown),
+                        period_start,
+                        period_end,
+                        used_news or [],
+                        used_sources or [],
+                    ),
+                )
+            report_id = cur.fetchone()[0]
+        conn.commit()
+        return report_id
+
+    def archive_old_daily_reports(self, keep: int = 7) -> int:
+        conn = self.connect()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE reports
+                SET is_archived = TRUE
+                WHERE report_type = 'daily'
+                  AND NOT is_archived
+                  AND id NOT IN (
+                    SELECT id FROM (
+                        SELECT id FROM reports
+                        WHERE report_type = 'daily'
+                        ORDER BY created_period_start DESC
+                        LIMIT %s
+                    ) keep_daily
+                  );
+                """,
+                (keep,),
+            )
+            updated = cur.rowcount
+        conn.commit()
+        return updated
+
+    def get_or_create_source(
+        self,
+        *,
+        name: str,
+        url: str = "",
+        source_type: str = "СМИ",
+        category_default: str = "Экономика",
+    ) -> int:
+        conn = self.connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM sources WHERE name = %s;", (name,))
+            found = cur.fetchone()
+            if found:
+                return found[0]
+            cur.execute(
+                """
+                INSERT INTO sources (name, url, url_rss, source_type, status, category_default)
+                VALUES (%s, %s, %s, %s, 'active', %s)
+                RETURNING id;
+                """,
+                (name, url, url, source_type, category_default),
+            )
+            source_id = cur.fetchone()[0]
+        conn.commit()
+        return source_id
+
+    def upsert_news_from_csv(
+        self,
+        *,
+        source_id: int,
+        source: str,
+        title: str,
+        url: str,
+        author: str,
+        category: str,
+        description: str,
+        text: str,
+        pub_date,
+        who,
+        what,
+        when,
+        consequences,
+        tags: list,
+        importance: Optional[str],
+        in_general: bool,
+        relevance_score: Optional[float],
+    ) -> int:
+        conn = self.connect()
+        query = """
+            INSERT INTO news (
+                source_id, source, title, url, author, category,
+                description, text, lifetime,
+                company_mentions, regulatory_changes, fact_when, consequences,
+                priority, tags, in_general, relevance_score
+            )
+            VALUES (
+                %s, %s, %s, %s, %s, %s,
+                %s, %s, %s,
+                %s, %s, %s, %s,
+                COALESCE(%s::news_priority_enum, 'low'::news_priority_enum),
+                %s, %s, %s
+            )
+            ON CONFLICT (url) DO UPDATE SET
+                source_id = EXCLUDED.source_id,
+                source = EXCLUDED.source,
+                title = EXCLUDED.title,
+                author = EXCLUDED.author,
+                category = EXCLUDED.category,
+                description = EXCLUDED.description,
+                text = EXCLUDED.text,
+                lifetime = COALESCE(EXCLUDED.lifetime, news.lifetime),
+                company_mentions = EXCLUDED.company_mentions,
+                regulatory_changes = EXCLUDED.regulatory_changes,
+                fact_when = EXCLUDED.fact_when,
+                consequences = EXCLUDED.consequences,
+                priority = EXCLUDED.priority,
+                tags = EXCLUDED.tags,
+                in_general = EXCLUDED.in_general,
+                relevance_score = EXCLUDED.relevance_score
+            RETURNING id;
+        """
+        with conn.cursor() as cur:
+            cur.execute(
+                query,
+                (
+                    source_id,
+                    source,
+                    title or "Без заголовка",
+                    url,
+                    author or "—",
+                    category or "Экономика",
+                    description or "",
+                    text or description or "",
+                    pub_date,
+                    tools.to_jsonb(who),
+                    tools.to_jsonb(what),
+                    when,
+                    tools.to_jsonb(consequences),
+                    tools.priority_to_db(importance) if importance else "low",
+                    tags or [],
+                    in_general,
+                    relevance_score,
+                ),
+            )
+            news_id = cur.fetchone()[0]
+        conn.commit()
+        return news_id
+
+    def list_reports(self, report_type: Optional[str] = None, *, include_archived: bool = False) -> list[dict]:
+        conn = self.connect()
+        query = """
+            SELECT id, report_type, title, summary, status,
+                   created_period_start, created_period_end,
+                   used_news, created_at
+            FROM reports
+            WHERE (%s IS NULL OR report_type = %s)
+              AND (%s OR NOT is_archived)
+            ORDER BY created_period_start DESC, created_at DESC;
+        """
+        with conn.cursor() as cur:
+            cur.execute(query, (report_type, report_type, include_archived))
+            rows = cur.fetchall()
+        out = []
+        for row in rows:
+            item = self._report_row_to_api(row)
+            summary = (item.get("content") or "").lower()
+            if item["news_count"] == 0 and "подходящих новостей нет" in summary:
+                continue
+            out.append(item)
+        return out
+
+    @staticmethod
+    def _report_row_to_api(row) -> dict:
+        (
+            report_id, report_type, title, summary, status,
+            period_start, period_end, used_news, created_at,
+        ) = row
+        return {
+            "id": str(report_id),
+            "report_type": report_type,
+            "title": title,
+            "content": summary or "",
+            "status": status,
+            "news_count": len(used_news or []),
+            "period_start": DBConnection._date_label(period_start),
+            "period_end": DBConnection._date_label(period_end, minus_second=True),
+            "created_at": tools.humanize_dt(created_at),
+            "source_name": "Общая лента",
+        }
+
+    @staticmethod
+    def _date_label(value, *, minus_second: bool = False) -> str:
+        if value is None:
+            return ""
+        dt = value
+        if minus_second:
+            from datetime import timedelta
+            dt = dt - timedelta(seconds=1)
+        if dt.tzinfo is not None:
+            from zoneinfo import ZoneInfo
+            dt = dt.astimezone(ZoneInfo("Europe/Moscow"))
+        return dt.date().isoformat()

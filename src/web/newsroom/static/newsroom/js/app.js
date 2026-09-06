@@ -19,6 +19,62 @@ function escapeHtml(str) {
   ));
 }
 
+function inlineMarkdown(str) {
+  return escapeHtml(str)
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[\s(])\*(?!\s)(.+?)\*(?=[\s).,]|$)/g, "$1<em>$2</em>");
+}
+
+function stripMarkdown(str) {
+  return String(str || "")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/^#{1,3}\s+/gm, "")
+    .replace(/^---+$/gm, "")
+    .replace(/^\d+\.\s+/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function renderMarkdown(str) {
+  const lines = String(str || "").replace(/\r\n/g, "\n").split("\n");
+  const out = [];
+  let items = [];
+
+  const flushList = () => {
+    if (!items.length) return;
+    out.push(`<ol class="report-md__list">${items.map((item) => `<li>${item}</li>`).join("")}</ol>`);
+    items = [];
+  };
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) {
+      continue;
+    }
+    if (/^---+$/.test(line)) {
+      flushList();
+      out.push("<hr class=\"report-md__rule\">");
+      continue;
+    }
+    const heading = line.match(/^(#{1,3})\s+(.+)$/);
+    if (heading) {
+      flushList();
+      const level = Math.min(heading[1].length + 2, 5);
+      out.push(`<h${level} class="report-md__h">${inlineMarkdown(heading[2])}</h${level}>`);
+      continue;
+    }
+    const numbered = line.match(/^\d+\.\s+(.+)$/);
+    if (numbered) {
+      items.push(inlineMarkdown(numbered[1]));
+      continue;
+    }
+    flushList();
+    out.push(`<p class="report-md__p">${inlineMarkdown(line)}</p>`);
+  }
+  flushList();
+  return out.join("");
+}
+
 const EVENT_TYPE_LABEL = {
   introduced: "Внесён",
   draft: "Проект",
@@ -376,7 +432,7 @@ function reportCardHtml(r) {
         <span class="card__origin">${escapeHtml(periodLabel)}</span>
       </div>
       <h3 class="card__title" data-action="view-report">${escapeHtml(r.title)}</h3>
-      <p class="card__desc">${escapeHtml(truncate(r.content, 220))}</p>
+      <p class="card__desc">${escapeHtml(truncate(stripMarkdown(r.content), 220))}</p>
       <div class="card__footer">
         <div class="card__meta"><span>Сформирован ${escapeHtml(r.created_at)}</span></div>
         <div class="card__actions">
@@ -450,7 +506,7 @@ function openReportViewModal(report) {
         </div>
 
         <div class="modal__section">
-          <div style="max-height:400px; overflow-y:auto; white-space:pre-wrap; line-height:1.6;">${escapeHtml(report.content)}</div>
+          <div class="report-md">${renderMarkdown(report.content)}</div>
         </div>
 
         <div class="modal__footer">

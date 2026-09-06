@@ -32,4 +32,10 @@ const Api = {
   addSource: (payload) => apiRequest("/add_source", { method: "POST", body: payload }),
   changeSource: (payload) => apiRequest("/change_source", { method: "POST", body: payload }),
   removeSource: (id) => apiRequest("/remove_source", { method: "POST", body: { id } }),
+  getReports: (sourceId, reportType) =>
+    apiRequest("/get_reports", { params: { source: sourceId, type: reportType } }),
+  generateDailyReport: (sourceId) =>
+    apiRequest("/generate_report", { method: "POST", body: { source: sourceId, type: "daily" } }),
+  generateWeeklyReport: (sourceId) =>
+    apiRequest("/generate_report", { method: "POST", body: { source: sourceId, type: "weekly" } }),
 };
