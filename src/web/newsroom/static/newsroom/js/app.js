@@ -288,10 +288,11 @@ function filteredNews() {
 }
 
 function mainTabsHtml() {
+  const isGeneral = state.view.sourceId === "general";
   return `
     <div class="tabs">
       <button class="tabs__item ${state.tab === "news" ? "is-active" : ""}" data-action="switch-tab" data-tab="news" type="button">Публикации</button>
-      <button class="tabs__item ${state.tab === "reports" ? "is-active" : ""}" data-action="switch-tab" data-tab="reports" type="button">Отчёты</button>
+      ${isGeneral ? `<button class="tabs__item ${state.tab === "reports" ? "is-active" : ""}" data-action="switch-tab" data-tab="reports" type="button">Отчёты</button>` : ""}
     </div>
   `;
 }
